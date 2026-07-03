@@ -64,6 +64,22 @@
       (swap! store assoc bogus-cid bogus-bytes)
       (is (false? (cd/verify-chain get-fn bogus-cid))))))
 
+(deftest head-is-o1-and-matches-chain-last
+  (let [{:keys [put! get-fn]} (mem-store)
+        c0 (cd/commit! put! get-fn "root-a" nil)
+        c1 (cd/commit! put! get-fn "root-b" c0)
+        c2 (cd/commit! put! get-fn "root-c" c1)]
+    (is (= (last (cd/chain get-fn c2)) (cd/head get-fn c2))
+        "head == (last (chain ...)), proven equivalent by chain's own construction")
+    (is (= {:cid c2 :state "root-c" :prev c1 :seq 2} (cd/head get-fn c2)))
+    (testing "head at a non-tip cid returns THAT commit's own info, not the true tip's --
+              consistent with head's contract (\"the commit-info at cid\"), and exactly
+              what (last (chain get-fn c1)) also returns"
+      (is (= (last (cd/chain get-fn c1)) (cd/head get-fn c1)))
+      (is (= {:cid c1 :state "root-b" :prev c0 :seq 1} (cd/head get-fn c1))))
+    (testing "nil cid -> nil, not an error"
+      (is (nil? (cd/head get-fn nil))))))
+
 (deftest prev-is-a-real-ipld-link-on-block
   (let [{:keys [put! get-fn]} (mem-store)
         c0 (cd/commit! put! get-fn "root-a" nil)

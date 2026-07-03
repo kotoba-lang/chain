@@ -74,6 +74,15 @@
          (= (map :seq entries) (range (count entries))))))
 
 (defn head
-  "The most recent (highest-seq) commit-info in the chain rooted at `cid`."
+  "The commit-info AT `cid` — `cid` is by definition the chain's tip (every
+   caller passes the CID they last recorded as \"current head\"), so this is
+   ONE block fetch, O(1) — not a walk to genesis. Provably equivalent to the
+   original `(last (chain get-fn cid))`: `chain`'s loop conses each ancestor
+   onto the FRONT of its accumulator and starts from `cid` itself, so `cid`'s
+   own commit-info is always the LAST element chain returns; `head` used to
+   pay for the whole walk just to hand back the first thing it read. Reading
+   the current state on every write (ADR-2607032430 D1's novelty-log commit!)
+   made this the hot path — an O(N) chain-length read on every O(tx) write
+   would have defeated the point."
   [get-fn cid]
-  (last (chain get-fn cid)))
+  (when cid (commit-info get-fn cid)))
