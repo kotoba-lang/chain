@@ -1,8 +1,8 @@
-(ns commit-dag.core-test
+(ns log.core-test
   (:require [clojure.test :refer [deftest is testing]]
             [cbor.core :as cbor]
             [ipld.core :as ipld]
-            [commit-dag.core :as cd]))
+            [log.core :as cd]))
 
 (defn- mem-store []
   (let [store (atom {})]

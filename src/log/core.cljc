@@ -1,19 +1,23 @@
-;; commit-dag.core — parent-linked, content-addressed commit chain.
+;; log.core — parent-linked, content-addressed commit chain.
 ;;
-;; The removed Rust `kotoba-graph::commit` (an append-only, parent-linked chain
-;; of `Commit{root, index_roots, prev, seq}` blocks -- "the CommitDag IS the
-;; write-ahead log", per ADR-2606041151) had no CLJC successor. This is that
-;; primitive, deliberately decoupled from any particular index structure: a
-;; commit wraps an opaque, dag-cbor-encodable `state` value -- today that's
-;; typically a single `kotoba-lang/prolly-tree` root CID string, and once Wave
-;; 2's 5-index Arrangement lands it can just as well be a map of
-;; `{"eavt" cid "aevt" cid ...}` -- this namespace never looks inside `state`,
-;; it only chains and verifies it. See ADR-2607022600 (Wave 1/2).
+;; Renamed from `commit-dag` (ADR-2607050800): the removed Rust
+;; `kotoba-graph::commit` (an append-only, parent-linked chain of
+;; `Commit{root, index_roots, prev, seq}` blocks -- "the CommitDag IS the
+;; write-ahead log", per ADR-2606041151) had no CLJC successor, and Datomic's
+;; own formal architecture term for exactly that immutable, durable,
+;; append-only transaction sequence is the **Log** -- this repo's own former
+;; README already said as much before the name caught up to it. Deliberately
+;; decoupled from any particular index structure: a commit wraps an opaque,
+;; dag-cbor-encodable `state` value -- today that's typically a single
+;; `kotoba-lang/prolly-tree` root CID string, or `kotoba-lang/arrangement`'s
+;; 4-index roots as a map of `{"eavt" cid "aevt" cid ...}` -- this namespace
+;; never looks inside `state`, it only chains and verifies it. See
+;; ADR-2607022600 (Wave 1/2).
 ;;
 ;; Storage is injected the same way `prolly-tree.core` does it: `put!` (cid,
 ;; bytes -> ignored) and `get-fn` (cid -> bytes), so a caller building on both
 ;; libraries shares one block store without any adapter glue.
-(ns commit-dag.core
+(ns log.core
   (:require [ipld.core :as ipld]))
 
 ;; `prev` is a REAL tag-42 IPLD link (null at genesis) via kotoba-lang/ipld --
@@ -21,7 +25,7 @@
 ;; every commit CID changed (clean break, pre-production, see superproject ADR).
 ;; `state` stays opaque: a plain value passes through untouched, and a caller
 ;; that wants its state's references walkable simply puts `ipld/link` values
-;; inside it (kotobase-engine links its quad-store snapshot CID this way).
+;; inside it (kotobase-peer links its arrangement snapshot CID this way).
 (defn- encode-commit [state prev-cid seq]
   (ipld/encode {"state" state "prev" (some-> prev-cid ipld/link) "seq" seq}))
 
