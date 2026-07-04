@@ -1,4 +1,4 @@
-# log
+# chain
 
 **Parent-linked, content-addressed commit chain — pure Clojure, no native deps,
 babashka-friendly.** `prev` is a **real tag-42 IPLD link** (null at genesis)
@@ -13,11 +13,14 @@ every commit CID changed (clean break, pre-production, see superproject ADR). Wa
 `kotoba-graph::commit` was an append-only, parent-linked chain of
 `Commit{root, index_roots, prev, seq}` blocks — per
 [ADR-2606041151](https://github.com/com-junkawasaki/root/blob/main/90-docs/adr/2606041151-kotoba-commitdag-as-wal-and-incremental-query-tier.md),
-**the CommitDag IS the write-ahead log**, not a separate journal — and
-Datomic's own formal architecture term for exactly that immutable, durable,
-append-only transaction sequence is the **Log**. This repo's name now says
-what its own docs already did. This namespace has no CLJC predecessor: it
-commits an opaque `state` value (today, typically a
+**the CommitDag IS the write-ahead log**, not a separate journal. Datomic's
+own formal architecture term for exactly that immutable, durable,
+append-only transaction sequence is the **Log** — the natural rename target,
+except `kotoba-lang/log` already exists for something unrelated (structured
+logging/telemetry, `kotoba.lang.log`). **`chain`** names what this repo
+actually is instead: a parent-linked chain, matching its own `chain`/
+`verify-chain`/`head` functions directly. This namespace has no CLJC
+predecessor: it commits an opaque `state` value (today, typically a
 [`kotoba-lang/prolly-tree`](https://github.com/kotoba-lang/prolly-tree) root
 CID string, or [`kotoba-lang/arrangement`](https://github.com/kotoba-lang/arrangement)'s
 4-index roots as a map of `{"eavt" cid "aevt" cid ...}`) and never looks
@@ -30,7 +33,7 @@ libraries shares one block store with no adapter glue.
 ## Use
 
 ```clojure
-(require '[log.core :as cd])
+(require '[chain.core :as cd])
 
 (def store (atom {}))
 (def put!   (fn [cid bytes] (swap! store assoc cid bytes)))
@@ -61,7 +64,7 @@ libraries shares one block store with no adapter glue.
 
 ```
 $ clojure -M:test
-Ran 6 tests containing 12 assertions.
+Ran 8 tests containing 22 assertions.
 0 failures, 0 errors.
 ```
 

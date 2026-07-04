@@ -1,10 +1,12 @@
 {:paths ["src"]
- ;; log (renamed from commit-dag, ADR-2607050800 -- Datomic's own term for
- ;; this immutable, append-only transaction sequence), Wave 1/2 of
- ;; ADR-2607022600. Same one Wave-0 dep as prolly-tree, but independent of it
- ;; -- a commit wraps an opaque `state` value (typically a prolly-tree root
- ;; CID, or arrangement's 4-index roots as a map of {index-name cid}), so this
- ;; namespace has no compile-time dependency on prolly-tree or arrangement.
+ ;; chain (renamed from commit-dag, ADR-2607050800 -- names the parent-linked
+ ;; chain structure this repo actually is, without the collision `log` would
+ ;; have had with the unrelated, already-existing kotoba-lang/log), Wave 1/2
+ ;; of ADR-2607022600. Same one Wave-0 dep as prolly-tree, but independent of
+ ;; it -- a commit wraps an opaque `state` value (typically a prolly-tree
+ ;; root CID, or arrangement's 4-index roots as a map of {index-name cid}),
+ ;; so this namespace has no compile-time dependency on prolly-tree or
+ ;; arrangement.
  :deps {io.github.kotoba-lang/ipld {:git/sha "fe67f8e4233792e606da75fceace89a1e6e2ae01"}}
  :aliases
  {:test {:extra-paths ["test"]

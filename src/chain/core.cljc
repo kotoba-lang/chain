@@ -1,23 +1,21 @@
-;; log.core — parent-linked, content-addressed commit chain.
+;; chain.core — parent-linked, content-addressed commit chain.
 ;;
-;; Renamed from `commit-dag` (ADR-2607050800): the removed Rust
-;; `kotoba-graph::commit` (an append-only, parent-linked chain of
-;; `Commit{root, index_roots, prev, seq}` blocks -- "the CommitDag IS the
-;; write-ahead log", per ADR-2606041151) had no CLJC successor, and Datomic's
-;; own formal architecture term for exactly that immutable, durable,
-;; append-only transaction sequence is the **Log** -- this repo's own former
-;; README already said as much before the name caught up to it. Deliberately
-;; decoupled from any particular index structure: a commit wraps an opaque,
-;; dag-cbor-encodable `state` value -- today that's typically a single
-;; `kotoba-lang/prolly-tree` root CID string, or `kotoba-lang/arrangement`'s
-;; 4-index roots as a map of `{"eavt" cid "aevt" cid ...}` -- this namespace
-;; never looks inside `state`, it only chains and verifies it. See
-;; ADR-2607022600 (Wave 1/2).
+;; Renamed from `commit-dag` (ADR-2607050800): "chain" names what this
+;; actually is -- a parent-linked chain of commits -- and lines up cleanly
+;; with this namespace's own `chain`/`verify-chain`/`head` functions, without
+;; the collision `log` would have had with the unrelated, already-existing
+;; `kotoba-lang/log` (structured logging/telemetry, `kotoba.lang.log`).
+;; Deliberately decoupled from any particular index structure: a commit
+;; wraps an opaque, dag-cbor-encodable `state` value -- today that's
+;; typically a single `kotoba-lang/prolly-tree` root CID string, or
+;; `kotoba-lang/arrangement`'s 4-index roots as a map of
+;; `{"eavt" cid "aevt" cid ...}` -- this namespace never looks inside
+;; `state`, it only chains and verifies it. See ADR-2607022600 (Wave 1/2).
 ;;
 ;; Storage is injected the same way `prolly-tree.core` does it: `put!` (cid,
 ;; bytes -> ignored) and `get-fn` (cid -> bytes), so a caller building on both
 ;; libraries shares one block store without any adapter glue.
-(ns log.core
+(ns chain.core
   (:require [ipld.core :as ipld]))
 
 ;; `prev` is a REAL tag-42 IPLD link (null at genesis) via kotoba-lang/ipld --
