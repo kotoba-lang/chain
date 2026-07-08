@@ -51,3 +51,5 @@ jobs:
       # :source-paths, so this always tests against the exact pinned
       # versions -- never a hand-duplicated, driftable path list.
       - run: npm run test:cljs
+
+      - run: clojure -M:lint
