@@ -18,6 +18,15 @@
 (ns chain.core
   (:require [ipld.core :as ipld]))
 
+(defn- verified-block [get-fn expected-cid]
+  (when-let [bytes (get-fn expected-cid)]
+    (let [actual (ipld/cid bytes)]
+      (when-not (= expected-cid actual)
+        (throw (ex-info "chain: block CID mismatch"
+                        {:type :ipld/cid-mismatch
+                         :expected-cid expected-cid :actual-cid actual})))
+      bytes)))
+
 ;; `prev` is a REAL tag-42 IPLD link (null at genesis) via kotoba-lang/ipld --
 ;; this replaced the first landing's plain-CID-string ("" at genesis) encoding;
 ;; every commit CID changed (clean break, pre-production, see superproject ADR).
@@ -33,7 +42,9 @@
    otherwise `seq` is `(inc (:seq prev-commit))`."
   [put! get-fn state prev-cid]
   (let [seq (if prev-cid
-              (inc (long (get (ipld/decode (get-fn prev-cid)) "seq")))
+              (inc (long (get (ipld/decode
+                               (verified-block get-fn prev-cid))
+                              "seq")))
               0)
         bytes (encode-commit state prev-cid seq)
         cid (ipld/cid bytes)]
@@ -44,7 +55,7 @@
   "Decode the commit at `cid` into `{:cid :state :prev :seq}`. `:prev` is nil
    at genesis."
   [get-fn cid]
-  (let [m (ipld/decode (get-fn cid))
+  (let [m (ipld/decode (verified-block get-fn cid))
         prev (get m "prev")]
     {:cid cid :state (get m "state")
      :prev (some-> prev ipld/link-cid)
@@ -68,12 +79,14 @@
    False on the first violation found; also false if the chain is empty
    (a bare `cid` that doesn't decode)."
   [get-fn cid]
-  (let [entries (chain get-fn cid)]
-    (and (seq entries)
-         (every? (fn [{:keys [cid state prev seq]}]
-                   (= cid (ipld/cid (encode-commit state prev seq))))
-                 entries)
-         (= (map :seq entries) (range (count entries))))))
+  (try
+    (let [entries (chain get-fn cid)]
+      (and (seq entries)
+           (every? (fn [{:keys [cid state prev seq]}]
+                     (= cid (ipld/cid (encode-commit state prev seq))))
+                   entries)
+           (= (map :seq entries) (range (count entries)))))
+    (catch #?(:clj Exception :cljs :default) _ false)))
 
 (defn head
   "The commit-info AT `cid` — `cid` is by definition the chain's tip (every
