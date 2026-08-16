@@ -33,33 +33,120 @@
 ;; `state` stays opaque: a plain value passes through untouched, and a caller
 ;; that wants its state's references walkable simply puts `ipld/link` values
 ;; inside it (kotobase-peer links its arrangement snapshot CID this way).
-(defn- encode-commit [state prev-cid seq]
-  (ipld/encode {"state" state "prev" (some-> prev-cid ipld/link) "seq" seq}))
+;; ── the causal fields, and why they are optional ────────────────────────────
+;;
+;; Root ADR-2608160200 asks a commit to carry WHY it was allowed and WHAT it
+;; was caused by, and to stop being a single line: a per-principal signed
+;; causal DAG rather than one chain.
+;;
+;; Every added field is written ONLY when supplied, so a commit made the way
+;; commits were made before this encodes to the same bytes and keeps the same
+;; CID. That is not politeness -- a format change here would rewrite the
+;; identity of every commit that exists, and there is a test pinning two
+;; known CIDs so the claim is checked rather than asserted.
+;;
+;;   "causes"    additional PARENTS: cross-principal causality. `prev` stays
+;;               this principal's own sequence, so a chain is the special
+;;               case of a DAG with one parent.
+;;   "authority" the capability or receipt CID that permitted this write.
+;;               Without it an audit reaches "who wrote this" and stops
+;;               short of "why were they allowed to".
+;;   "actor"     the principal whose sequence `prev` belongs to.
+;;   "lamport"   1 + max over parents. Derived, never taken from the caller,
+;;               so it cannot disagree with the edges it summarises.
+;;
+;; What this namespace does NOT do is check a signature. `authority` is a CID
+;; it stores and verifies the SHAPE of; deciding that a grant was validly
+;; issued belongs to aiueos, and a chain that pretended to do it would be
+;; trusted for something it never checked.
+(defn- encode-commit
+  ;; `seq-num`, not `seq`: the field is called seq and the parameter must not
+  ;; be, because `(seq causes)` two lines down would then call a number.
+  ;; The same shadowing broke every request in kotobase-storage-s3's signed
+  ;; client (`:key` over `clojure.core/key`) -- it is a Clojure trap that
+  ;; type-checks as a call and fails only at runtime.
+  ([state prev-cid seq-num] (encode-commit state prev-cid seq-num nil))
+  ([state prev-cid seq-num {:keys [causes authority actor lamport]}]
+   (ipld/encode (cond-> {"state" state "prev" (some-> prev-cid ipld/link) "seq" seq-num}
+                  (seq causes) (assoc "causes" (mapv ipld/link causes))
+                  authority    (assoc "authority" (ipld/link authority))
+                  actor        (assoc "actor" actor)
+                  lamport      (assoc "lamport" lamport)))))
+
+(defn- commit-map [get-fn cid]
+  (ipld/decode (verified-block get-fn cid)))
+
+(defn- clock-of
+  "A parent's logical time. A commit written before `lamport` existed falls
+   back to its `seq`, which for a linear chain IS a Lamport clock -- so a
+   causal commit can name a pre-causal parent without inventing a number."
+  [m]
+  (long (or (get m "lamport") (get m "seq") 0)))
 
 (defn commit!
-  "Append a `{state, prev, seq}` commit, calling `(put! cid bytes)`. Returns
-   the new commit's CID. `prev-cid` is nil for the genesis commit (seq 0);
-   otherwise `seq` is `(inc (:seq prev-commit))`."
-  [put! get-fn state prev-cid]
-  (let [seq (if prev-cid
-              (inc (long (get (ipld/decode
-                               (verified-block get-fn prev-cid))
-                              "seq")))
-              0)
-        bytes (encode-commit state prev-cid seq)
-        cid (ipld/cid bytes)]
-    (put! cid bytes)
-    cid))
+  "Append a commit, calling `(put! cid bytes)`. Returns the new commit's CID.
+
+   `prev-cid` is nil for the genesis commit (seq 0); otherwise `seq` is
+   `(inc (:seq prev-commit))`.
+
+   The 5-arity takes `{:causes [cid ...] :authority cid :actor string}` and
+   additionally derives `lamport`. Omit it and the commit is byte-identical
+   to what the 4-arity always produced."
+  ([put! get-fn state prev-cid] (commit! put! get-fn state prev-cid nil))
+  ([put! get-fn state prev-cid opts]
+   (let [prev-m (when prev-cid (commit-map get-fn prev-cid))
+         seq-num (if prev-m (inc (long (get prev-m "seq"))) 0)
+         causes (vec (:causes opts))
+         ;; Every parent is fetched and CID-verified here, so a cause that
+         ;; does not exist cannot be cited: an edge to nothing is worse than
+         ;; no edge, because it reads as provenance.
+         cause-ms (mapv #(commit-map get-fn %) causes)
+         lamport (when opts
+                   (let [parents (remove nil? (cons prev-m cause-ms))]
+                     (if (seq parents)
+                       (inc (long (apply max (map clock-of parents))))
+                       0)))
+         bytes (encode-commit state prev-cid seq-num
+                              (when opts (assoc opts :causes causes :lamport lamport)))
+         cid (ipld/cid bytes)]
+     (put! cid bytes)
+     cid)))
 
 (defn commit-info
-  "Decode the commit at `cid` into `{:cid :state :prev :seq}`. `:prev` is nil
-   at genesis."
+  "Decode the commit at `cid` into
+   `{:cid :state :prev :seq :causes :authority :actor :lamport}`.
+
+   `:prev` is nil at genesis; the causal keys are nil (or empty) on a commit
+   that did not carry them, which is every commit written before they
+   existed."
   [get-fn cid]
-  (let [m (ipld/decode (verified-block get-fn cid))
-        prev (get m "prev")]
-    {:cid cid :state (get m "state")
-     :prev (some-> prev ipld/link-cid)
-     :seq (get m "seq")}))
+  (let [m (commit-map get-fn cid)
+        prev (get m "prev")
+        causes (get m "causes")
+        authority (get m "authority")]
+    ;; Absent keys stay absent rather than becoming nil/[]: a commit written
+    ;; before the causal fields existed decodes to exactly the map it always
+    ;; decoded to, so every existing caller and test is untouched. "Has no
+    ;; causes" and "carries an empty cause list" are also different facts.
+    (cond-> {:cid cid :state (get m "state")
+             :prev (some-> prev ipld/link-cid)
+             :seq (get m "seq")}
+      (seq causes) (assoc :causes (mapv ipld/link-cid causes))
+      authority (assoc :authority (ipld/link-cid authority))
+      (get m "actor") (assoc :actor (get m "actor"))
+      (get m "lamport") (assoc :lamport (get m "lamport")))))
+
+(defn- re-encode
+  "The bytes a commit-info must hash back to.
+
+  A commit carrying causal fields is reconstructed with them; one carrying
+  none is reconstructed plain, which is what makes an old commit still
+  verify byte-for-byte."
+  [{:keys [state prev causes authority actor lamport] seq-num :seq}]
+  (if (or (seq causes) authority actor lamport)
+    (encode-commit state prev seq-num {:causes causes :authority authority
+                                       :actor actor :lamport lamport})
+    (encode-commit state prev seq-num)))
 
 (defn chain
   "Walk commit history from `cid` back to genesis via `:prev` links. Returns a
@@ -80,11 +167,9 @@
    (a bare `cid` that doesn't decode)."
   [get-fn cid]
   (try
-    (let [entries (chain get-fn cid)]
+    (let [entries (map #(commit-info get-fn (:cid %)) (chain get-fn cid))]
       (and (seq entries)
-           (every? (fn [{:keys [cid state prev seq]}]
-                     (= cid (ipld/cid (encode-commit state prev seq))))
-                   entries)
+           (every? #(= (:cid %) (ipld/cid (re-encode %))) entries)
            (= (map :seq entries) (range (count entries)))))
     (catch #?(:clj Exception :cljs :default) _ false)))
 
@@ -101,3 +186,97 @@
    would have defeated the point."
   [get-fn cid]
   (when cid (commit-info get-fn cid)))
+
+;; ── the causal DAG ──────────────────────────────────────────────────────────
+
+(defn causal-parents
+  "Every parent of a commit: its own `prev` plus its `causes`.
+
+  A chain is the special case where this returns at most one."
+  [info]
+  (vec (remove nil? (cons (:prev info) (:causes info)))))
+
+(defn walk-causal
+  "Reachable history from `cid` over BOTH `prev` and `causes`.
+
+  Returns `{:commits {cid info} :order [cid ...] :truncated? bool}` --
+  `:order` is the visit order, deduplicated, so a commit reachable by two
+  routes appears once.
+
+  Bounded by `max-visits` (default 4096) and it SAYS when it stopped rather
+  than returning a short history as if it were the whole one."
+  ([get-fn cid] (walk-causal get-fn cid 4096))
+  ([get-fn cid max-visits]
+   (loop [frontier [cid] seen {} order [] n 0]
+     (cond
+       (empty? frontier) {:commits seen :order order :truncated? false}
+       (>= n max-visits) {:commits seen :order order :truncated? true}
+       :else
+       (let [c (first frontier)]
+         (if (contains? seen c)
+           (recur (rest frontier) seen order n)
+           (let [info (commit-info get-fn c)]
+             (recur (into (vec (rest frontier)) (causal-parents info))
+                    (assoc seen c info)
+                    (conj order c)
+                    (inc n)))))))))
+
+(defn verify-causal
+  "Verify the DAG reachable from `cid`.
+
+  Returns a REPORT rather than a boolean:
+
+      {:ok? bool :visited n :truncated? bool :reason kw :at cid}
+
+  `verify-chain` answers true/false, which cannot distinguish \"this history
+  is sound\" from \"something threw and we caught it\" -- and those need
+  different responses. Checks:
+
+  - every commit re-derives to its own CID from its own bytes;
+  - every parent named is actually fetchable (a cited parent that does not
+    exist reads as provenance while being nothing);
+  - `lamport`, where present, is exactly 1 + the maximum over its parents, so
+    the clock cannot disagree with the edges it summarises;
+  - the walk terminated on its own rather than on the visit bound."
+  ([get-fn cid] (verify-causal get-fn cid 4096))
+  ([get-fn cid max-visits]
+   (try
+     (let [{:keys [commits order truncated?]} (walk-causal get-fn cid max-visits)]
+       (cond
+         (empty? order)
+         {:ok? false :reason :empty :visited 0 :truncated? false}
+
+         truncated?
+         {:ok? false :reason :visit-bound-reached :visited (count order)
+          :truncated? true}
+
+         :else
+         (or (some (fn [c]
+                     (let [info (get commits c)]
+                       (cond
+                         (not= c (ipld/cid (re-encode info)))
+                         {:ok? false :reason :cid-mismatch :at c
+                          :visited (count order) :truncated? false}
+
+                         (some #(nil? (get commits %)) (causal-parents info))
+                         {:ok? false :reason :missing-parent :at c
+                          :visited (count order) :truncated? false}
+
+                         (and (:lamport info)
+                              (let [ps (causal-parents info)
+                                    expect (if (seq ps)
+                                             (inc (long (apply max
+                                                               (map #(long (or (:lamport (get commits %))
+                                                                               (:seq (get commits %))
+                                                                               0))
+                                                                    ps))))
+                                             0)]
+                                (not= (long (:lamport info)) expect)))
+                         {:ok? false :reason :lamport-disagrees-with-edges :at c
+                          :visited (count order) :truncated? false}
+
+                         :else nil)))
+                   order)
+             {:ok? true :visited (count order) :truncated? false})))
+     (catch #?(:clj Exception :cljs :default) e
+       {:ok? false :reason :threw :message #?(:clj (.getMessage e) :cljs (str e))}))))
