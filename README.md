@@ -83,3 +83,49 @@ but not yet any multi-peer merge story).
 ## License
 
 Apache-2.0.
+
+## A commit can carry why it was allowed, and what caused it
+
+Root ADR-2608160200 asks a commit to stop being a single line: a
+per-principal causal DAG rather than one chain, with the authority that
+permitted the write recorded next to it. `commit!` takes an optional map:
+
+```clojure
+(chain/commit! put! get-fn state prev-cid
+               {:actor "alice"
+                :causes [b1]        ; parents from other principals' sequences
+                :authority grant})  ; the capability/receipt CID that allowed it
+```
+
+| field | what it is |
+|---|---|
+| `causes` | additional **parents**. `prev` stays this principal's own sequence, so a chain is the special case of a DAG with one parent |
+| `authority` | the CID that permitted this write. Without it an audit reaches *who wrote this* and stops short of *why were they allowed to* |
+| `actor` | the principal whose sequence `prev` belongs to |
+| `lamport` | `1 + max` over parents — **derived, never taken from the caller**, so the clock cannot disagree with the edges it summarises |
+
+**Every added field is written only when supplied**, so a commit made the way
+commits were made before this encodes to the same bytes and keeps the same
+CID. A test pins two CIDs recorded from the previous implementation, and the
+eight tests that existed before pass unchanged — the claim is checked, not
+asserted. `commit-info` likewise leaves absent keys absent: *has no causes*
+and *carries an empty cause list* are different facts.
+
+A parent is fetched and CID-verified when it is cited, so an edge to
+something that does not exist is refused rather than stored — a dangling
+edge is worse than no edge, because it reads as provenance.
+
+`walk-causal` follows both `prev` and `causes`, visiting a commit reachable
+by several routes once, and **says when it stopped** at its visit bound
+instead of returning a short history as if it were the whole one.
+
+`verify-causal` returns a report rather than a boolean, because `false`
+cannot distinguish *this history is unsound* from *something threw and we
+caught it*, and those need different responses. It checks CID re-derivation,
+that every named parent is fetchable, and that `lamport` agrees with the
+edges.
+
+**It does not check signatures.** `authority` is a CID whose shape this
+namespace verifies; deciding that a grant was validly issued belongs to
+`aiueos`, and a chain that pretended to do it would be trusted for something
+it never checked.

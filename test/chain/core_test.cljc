@@ -93,3 +93,116 @@
       (is (= [c0 c0] (ipld/links node))))
     (testing "commit-info returns the state Link intact"
       (is (= (ipld/link c0) (:state (cd/commit-info get-fn c1)))))))
+
+;; ── the causal DAG (root ADR-2608160200) ────────────────────────────────────
+
+(deftest a-plain-commit-still-hashes-to-what-it-always-did
+  (testing "the causal fields are written only when supplied, so adding them
+            did not rewrite the identity of every commit that exists. These
+            two CIDs were recorded from the implementation BEFORE the change"
+    (let [{:keys [put! get-fn]} (mem-store)
+          g (cd/commit! put! get-fn {"root" "bafyroot"} nil)
+          c1 (cd/commit! put! get-fn {"root" "bafyroot2"} g)]
+      (is (= "bafyreifuvzgq4uw2hwp2x42wnpxp5rxkbbtxroxbvxwlg7p4uyxa35tyy4" g))
+      (is (= "bafyreia4yldc5snp2pzpgxgtzg3n3le7as5vlox3pj7brys25mxjt47cou" c1))
+      (is (true? (cd/verify-chain get-fn c1))))))
+
+(deftest a-commit-can-say-why-it-was-allowed-and-what-caused-it
+  (let [{:keys [put! get-fn]} (mem-store)
+        a0 (cd/commit! put! get-fn "a0" nil {:actor "alice"})
+        b0 (cd/commit! put! get-fn "b0" nil {:actor "bob"})
+        grant (ipld/put-node! put! {"grant" "read"})
+        a1 (cd/commit! put! get-fn "a1" a0 {:actor "alice" :causes [b0]
+                                            :authority grant})
+        info (cd/commit-info get-fn a1)]
+    (is (= "alice" (:actor info)))
+    (is (= [b0] (:causes info)) "a parent from another principal's sequence")
+    (is (= grant (:authority info))
+        "an audit reaches why they were allowed, not just who wrote it")
+    (is (= [a0 b0] (cd/causal-parents info)) "prev is a parent too")))
+
+(deftest lamport-is-derived-from-the-edges-not-taken-from-the-caller
+  (let [{:keys [put! get-fn]} (mem-store)
+        a0 (cd/commit! put! get-fn "a0" nil {:actor "alice"})
+        b0 (cd/commit! put! get-fn "b0" nil {:actor "bob"})
+        b1 (cd/commit! put! get-fn "b1" b0 {:actor "bob"})
+        ;; the caller lies about the clock; the commit records the truth
+        a1 (cd/commit! put! get-fn "a1" a0 {:actor "alice" :causes [b1]
+                                            :lamport 999})]
+    (is (= 0 (:lamport (cd/commit-info get-fn a0))))
+    (is (= 1 (:lamport (cd/commit-info get-fn b1))))
+    (is (= 2 (:lamport (cd/commit-info get-fn a1)))
+        "1 + max(a0=0, b1=1) -- and not 999")))
+
+(deftest a-causal-commit-can-name-a-parent-written-before-the-clock-existed
+  (testing "falling back to :seq, which for a linear chain IS a Lamport clock,
+            so joining an old chain does not require inventing a number"
+    (let [{:keys [put! get-fn]} (mem-store)
+          old0 (cd/commit! put! get-fn "old0" nil)
+          old1 (cd/commit! put! get-fn "old1" old0)
+          new (cd/commit! put! get-fn "new" old1 {:actor "alice"})]
+      (is (nil? (:lamport (cd/commit-info get-fn old1))))
+      (is (= 2 (:lamport (cd/commit-info get-fn new))) "1 + old1's seq of 1"))))
+
+(deftest citing-a-parent-that-does-not-exist-is-refused
+  (testing "an edge to nothing is worse than no edge, because it reads as
+            provenance"
+    (let [{:keys [put! get-fn]} (mem-store)
+          a0 (cd/commit! put! get-fn "a0" nil {:actor "alice"})]
+      (is (thrown? #?(:clj Exception :cljs js/Error)
+                   (cd/commit! put! get-fn "a1" a0
+                               {:actor "alice"
+                                :causes ["bafyreiaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]}))))))
+
+(deftest a-diamond-is-visited-once
+  (let [{:keys [put! get-fn]} (mem-store)
+        root (cd/commit! put! get-fn "root" nil {:actor "alice"})
+        l (cd/commit! put! get-fn "left" root {:actor "alice"})
+        r (cd/commit! put! get-fn "right" nil {:actor "bob" :causes [root]})
+        tip (cd/commit! put! get-fn "tip" l {:actor "alice" :causes [r]})
+        {:keys [order truncated?]} (cd/walk-causal get-fn tip)]
+    (is (false? truncated?))
+    (is (= 4 (count order)) "root is reachable two ways and appears once")
+    (is (apply distinct? order))
+    (is (:ok? (cd/verify-causal get-fn tip)))))
+
+(deftest verify-causal-catches-a-forged-clock
+  (let [{:keys [put! get-fn store]} (mem-store)
+        a0 (cd/commit! put! get-fn "a0" nil {:actor "alice"})
+        a1 (cd/commit! put! get-fn "a1" a0 {:actor "alice"})
+        ;; rewrite a1 with a clock that does not follow from its edges
+        forged (ipld/encode {"state" "a1" "prev" (ipld/link a0) "seq" 1
+                             "actor" "alice" "lamport" 7})
+        forged-cid (ipld/cid forged)]
+    (is (:ok? (cd/verify-causal get-fn a1)))
+    (put! forged-cid forged)
+    (let [{:keys [ok? reason at]} (cd/verify-causal get-fn forged-cid)]
+      (is (false? ok?))
+      (is (= :lamport-disagrees-with-edges reason))
+      (is (= forged-cid at)))
+    (is (some? @store))))
+
+(deftest verify-causal-says-it-stopped-rather-than-reporting-a-short-history
+  (let [{:keys [put! get-fn]} (mem-store)
+        tip (reduce (fn [prev i] (cd/commit! put! get-fn (str "c" i) prev {:actor "alice"}))
+                    nil (range 6))
+        {:keys [ok? reason truncated? visited]} (cd/verify-causal get-fn tip 3)]
+    (is (false? ok?) "a bounded walk must not pass by seeing less")
+    (is (= :visit-bound-reached reason))
+    (is (true? truncated?))
+    (is (= 3 visited))))
+
+(deftest verify-causal-accepts-a-chain-written-before-any-of-this
+  (let [{:keys [put! get-fn]} (mem-store)
+        tip (reduce (fn [prev i] (cd/commit! put! get-fn (str "c" i) prev))
+                    nil (range 4))]
+    (is (:ok? (cd/verify-causal get-fn tip)))
+    (is (true? (cd/verify-chain get-fn tip)))))
+
+(deftest verify-chain-still-works-on-causal-commits
+  (testing "the linear verifier reconstructs the causal fields too, so a
+            chain of causal commits is not reported as tampered"
+    (let [{:keys [put! get-fn]} (mem-store)
+          a0 (cd/commit! put! get-fn "a0" nil {:actor "alice"})
+          a1 (cd/commit! put! get-fn "a1" a0 {:actor "alice"})]
+      (is (true? (cd/verify-chain get-fn a1))))))
