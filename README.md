@@ -49,6 +49,41 @@ libraries shares one block store with no adapter glue.
                               ;    or a spliced-in commit skips a seq
 ```
 
+## Was it allowed?
+
+`verify-causal` answers whether a history is *sound*. `chain.authorized`
+answers whether it was *permitted*, by walking the DAG and asking an injected
+resolver about the authority each commit names. Issuance stays elsewhere —
+this namespace joins, it does not decide.
+
+```clojure
+(require '[chain.authorized :as auth])
+
+(auth/verify-authorized get-fn head
+                        {:resolve-grant (fn [cid] {:subject "alice" ...})
+                         :as-of "2026-08-18T00:00:00Z"
+                         :revocation :prospective})
+;; {:ok? false :visited 3 :as-of "…" :revocation :prospective
+;;  :findings [{:cid "bafy…" :actor "mallory" :reason :revoked}]}
+```
+
+Two things the caller must state, with no default:
+
+- **`:as-of`** — a Lamport clock orders events but is not a time, and grants
+  expire in wall-clock time. The two are not convertible, so the instant is
+  named by the caller and repeated back in the verdict.
+- **`:revocation`** — `:retroactive` (the grant was never trustworthy, which
+  is what a compromise means) or `:prospective` (history records what was
+  permitted then, which is what a receipt means). Neither is right in general.
+
+**Merges do not launder.** `:ok?` is false when any reachable commit fails, so
+merging an unauthorized branch into an authorized one yields an unauthorized
+history — the merge commit's own authority covers the merge, not what it drags
+in.
+
+`:findings` lists every failure rather than the first, and `:visited` is the
+evidence floor: a report over zero commits is not a pass.
+
 ## Correctness
 
 `clojure -M:test` (no network):
