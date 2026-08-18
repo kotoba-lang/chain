@@ -215,11 +215,24 @@
        (let [c (first frontier)]
          (if (contains? seen c)
            (recur (rest frontier) seen order n)
-           (let [info (commit-info get-fn c)]
+           ;; A parent the store cannot produce is SKIPPED rather than
+           ;; decoded: it is not added to `commits`, so the commit citing it
+           ;; fails `verify-causal`'s missing-parent check by name.
+           ;;
+           ;; Before this it threw out of `commit-map` and `verify-causal`
+           ;; caught it as `:reason :threw` -- so the documented, specific
+           ;; diagnosis ("a cited parent that does not exist reads as
+           ;; provenance while being nothing") was UNREACHABLE, and an
+           ;; operator got the generic catch-all instead. Measured
+           ;; 2026-08-18 while building the authorization join: the check
+           ;; existed, was correct, and could not fire.
+           (if-let [info (try (commit-info get-fn c)
+                              (catch #?(:clj Exception :cljs :default) _ nil))]
              (recur (into (vec (rest frontier)) (causal-parents info))
                     (assoc seen c info)
                     (conj order c)
-                    (inc n)))))))))
+                    (inc n))
+             (recur (vec (rest frontier)) seen order (inc n)))))))))
 
 (defn verify-causal
   "Verify the DAG reachable from `cid`.
