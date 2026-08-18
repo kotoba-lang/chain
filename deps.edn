@@ -7,7 +7,7 @@
  ;; root CID, or arrangement's 4-index roots as a map of {index-name cid}),
  ;; so this namespace has no compile-time dependency on prolly-tree or
  ;; arrangement.
- :deps {io.github.kotoba-lang/io-ipld {:git/sha "4591764514239c4777f227a7a56d46c901e2a4a0"}}
+ :deps {io.github.kotoba-lang/io-ipld {:git/sha "f99bf27d58a75bb8cf6ddfd2d57a0aaac9c824ac"}}
  :aliases
  {:test {:extra-paths ["test"]
          :extra-deps {io.github.cognitect-labs/test-runner
