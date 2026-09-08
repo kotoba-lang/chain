@@ -7,7 +7,12 @@
  ;; root CID, or arrangement's 4-index roots as a map of {index-name cid}),
  ;; so this namespace has no compile-time dependency on prolly-tree or
  ;; arrangement.
- :deps {io.github.kotoba-lang/io-ipld {:git/sha "48ba40490cf082a1473986ac757b8e2b214a3d1b"}}
+ :deps {
+        ;; kotoba.lang.text, not clojure.string. Pinned as an explicit floor:
+        ;; tools.deps takes the NEWEST sha it is shown, so without a floor here
+        ;; this repo silently rides whatever a sibling happens to name.
+        io.github.kotoba-lang/text {:git/sha "73bdb13ae7a3d004b44bca08be03a3191157a38f"}
+       io.github.kotoba-lang/io-ipld {:git/sha "48ba40490cf082a1473986ac757b8e2b214a3d1b"}}
  :aliases
  {:test {:extra-paths ["test"]
          :extra-deps {io.github.cognitect-labs/test-runner
