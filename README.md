@@ -86,7 +86,7 @@ evidence floor: a report over zero commits is not a pass.
 
 ## Correctness
 
-`clojure -M:test` (no network):
+`kbb -M:test` (no network):
 
 - genesis + multi-commit chain linking, `:seq` values, `head`
 - `state` is opaque — a bare CID string and a `{index cid}` map both round-trip
@@ -98,7 +98,7 @@ evidence floor: a report over zero commits is not a pass.
   the tamper-evidence check above
 
 ```
-$ clojure -M:test
+$ kbb -M:test
 Ran 8 tests containing 22 assertions.
 0 failures, 0 errors.
 ```
