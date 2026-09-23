@@ -1,5 +1,5 @@
 (ns chain.core-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [cbor.core :as cbor]
             [ipld.core :as ipld]
             [chain.core :as cd]))
