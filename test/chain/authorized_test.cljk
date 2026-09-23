@@ -8,7 +8,7 @@
   them, and the grant shape with `revoked?`/`expires-at` lives in a different
   organisation's repository. A commit could name an authority that was revoked
   before it was written and every check in the stack passed."
-  (:require #?(:clj [clojure.test :refer [deftest is testing]]
+  (:require #?(:clj [kotoba.test :refer [deftest is testing]]
                :cljs [cljs.test :refer [deftest is testing] :include-macros true])
             [ipld.core :as ipld]
             [chain.core :as chain]
