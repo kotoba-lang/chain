@@ -164,3 +164,16 @@ edges.
 namespace verifies; deciding that a grant was validly issued belongs to
 `aiueos`, and a chain that pretended to do it would be trusted for something
 it never checked.
+
+## Pure Kotoba encoder
+
+`src/chain/commit.kotoba` (`chain.commit`) encodes a commit to DAG-CBOR without
+the host: `encode-commit` takes state, prev, seq, causes, authority, actor and
+lamport (absent fields as `""`, an empty map, or `-1`) and returns the bytes
+`commit!` would store. `next-lamport` is `1 + max` over the parents' clocks.
+`src/chain/commit_cid.kotoba` (`chain.commit-cid`) turns those bytes into the
+commit CID through `hash/sha256` (capability 3).
+
+`chain.core` stays the oracle: `scripts/commit-oracle-cases.cljk` checks four
+commits against `commit!`, byte for byte and CID for CID. Storage, decoding and
+chain walks stay host-side; `migration/commit-v1.edn` lists what is ported.

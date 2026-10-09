@@ -16,7 +16,7 @@
         ;; tools.deps takes the NEWEST sha it is shown, so without a floor here
         ;; this repo silently rides whatever a sibling happens to name.
         io.github.kotoba-lang/text {:git/sha "73bdb13ae7a3d004b44bca08be03a3191157a38f"}
-       io.github.kotoba-lang/io-ipld {:git/sha "48ba40490cf082a1473986ac757b8e2b214a3d1b"}}
+       io.github.kotoba-lang/io-ipld {:git/sha "b60bff13d3875059e09ba81c75b787728bbc5625"}}
  :aliases
  {:test {:extra-paths ["test"]
          :extra-deps {io.github.cognitect-labs/test-runner
