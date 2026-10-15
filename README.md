@@ -30,6 +30,42 @@ Storage is injected exactly the way `prolly-tree.core` does it (`put!`
 `(cid, bytes) -> ignored` / `get-fn (cid) -> bytes`), so a caller using both
 libraries shares one block store with no adapter glue.
 
+## Where this fits / quick use
+
+Stack position: kotoba (language, authority) -> itonami (jobs) -> murakumo
+(compute) -> kotobase (state/results) -> optional anchor. `chain` is the small
+commit-chain primitive underneath that state layer. The private-network layer,
+AWAI DNA (DNA CID = network id, signed per-agent source chains), is a proposed
+spec only (network-awai/network-awai-apex PR #14, branch
+`dna-private-network-spec`, `awai-dna/`). Interactive figure:
+<https://kotoba-lang.org/anatomy/kotoba-murakumo/>.
+
+What it gives you: each commit is a DAG-CBOR block whose CID is its address.
+`prev` is an IPLD tag-42 link to the parent commit (null at genesis), `seq`
+counts up, and `state` is an opaque value `chain` never looks inside. So a
+head CID commits to the whole history behind it, and a store that returns wrong
+bytes for a CID, or a spliced-in commit, is detected by `verify-chain`. It is
+a library for append-only, tamper-evident history, not a blockchain: there is no
+network, consensus or token. Relation to kotobase: kotobase's commit DAG
+(signed, multi-parent, CID-addressed) is the richer database-level analogue;
+`chain` is the minimal parent-linked form (its optional `causes` field makes a
+commit a DAG node too). It does not sign anything or depend on kotobase.
+
+Minimal check against the real `chain.core` API (run offline with `kbb`; the
+tampered store is the same example as in "Use" below plus one overwritten block):
+
+```clojure
+(require '[chain.core :as cd])
+(def store (atom {}))
+(def put!   (fn [cid bytes] (swap! store assoc cid bytes)))
+(def get-fn (fn [cid] (get @store cid)))
+(def c0 (cd/commit! put! get-fn "state-a" nil))
+(def c1 (cd/commit! put! get-fn "state-b" c0))
+(cd/verify-chain get-fn c1)              ;=> true
+(swap! store assoc c0 (get @store c1))   ; store lies about c0's bytes
+(cd/verify-chain get-fn c1)              ;=> false
+```
+
 ## Use
 
 ```clojure
